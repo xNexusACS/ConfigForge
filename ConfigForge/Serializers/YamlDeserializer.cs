@@ -1,3 +1,6 @@
+using System.Collections;
+using System.Reflection;
+
 namespace ConfigForge.Serializers;
 
 public static class YamlDeserializer
@@ -6,63 +9,77 @@ public static class YamlDeserializer
     {
         var obj = new T();
         var type = typeof(T);
+        var lines = yaml.Split('\n');
+        PropertyInfo? currentListProperty = null;
+        IList? currentList = null;
 
-        foreach (var line in yaml.Split('\n'))
+        foreach (var rawLine in lines)
         {
-            var trimmed = line.Trim();
-            if (string.IsNullOrWhiteSpace(trimmed) || trimmed.StartsWith("#"))
+            var line = rawLine.TrimEnd();
+            if (string.IsNullOrWhiteSpace(line) || line.TrimStart().StartsWith("#"))
                 continue;
+            
+            if (line.TrimStart().StartsWith("-"))
+            {
+                if (currentListProperty == null || currentList == null)
+                    continue;
 
-            var parts = trimmed.Split(':', 2);
-            if (parts.Length != 2) 
+                var elementType = currentListProperty.PropertyType.GetGenericArguments()[0];
+                var rawItemValue = line.TrimStart().TrimStart('-').Trim();
+                var parsedItem = ParseValue(rawItemValue, elementType);
+                currentList.Add(parsedItem);
+                continue;
+            }
+            
+            var parts = line.Split(':', 2);
+            if (parts.Length != 2)
                 continue;
 
             var key = parts[0].Trim();
-            var value = parts[1].Trim();
-            
-            if ((value.StartsWith("\"") && value.EndsWith("\"")) ||
-                (value.StartsWith("'") && value.EndsWith("'")))
-            {
-                value = value[1..^1];
-            }
+            var rawValue = parts[1].Trim();
 
             var prop = type.GetProperty(key);
-            if (prop == null) 
+            if (prop == null)
                 continue;
-
-            try
+            
+            if (typeof(IList).IsAssignableFrom(prop.PropertyType) && prop.PropertyType.IsGenericType)
             {
-                object converted;
-
-                if (prop.PropertyType == typeof(string))
-                {
-                    converted = value;
-                }
-                else if (prop.PropertyType == typeof(int))
-                {
-                    converted = int.TryParse(value, out var v) ? v : 0;
-                }
-                else if (prop.PropertyType == typeof(bool))
-                {
-                    converted = bool.TryParse(value, out var v) && v;
-                }
-                else if (prop.PropertyType == typeof(double))
-                {
-                    converted = double.TryParse(value, out var v) ? v : 0.0;
-                }
-                else
-                {
-                    converted = Convert.ChangeType(value, prop.PropertyType);
-                }
-
-                prop.SetValue(obj, converted);
+                var listInstance = (IList)Activator.CreateInstance(prop.PropertyType)!;
+                prop.SetValue(obj, listInstance);
+                currentListProperty = prop;
+                currentList = listInstance;
+                continue;
             }
-            catch
-            {
-                Console.WriteLine($"Error parsing {key}={value}");
-            }
+            
+            prop.SetValue(obj, ParseValue(rawValue, prop.PropertyType));
+            
+            currentListProperty = null;
+            currentList = null;
         }
 
         return obj;
+    }
+    
+    private static object ParseValue(string value, Type targetType)
+    {
+        if ((value.StartsWith("\"") && value.EndsWith("\"")) ||
+            (value.StartsWith("'") && value.EndsWith("'")))
+        {
+            value = value[1..^1];
+        }
+
+        if (targetType == typeof(string)) return value;
+        if (targetType == typeof(int)) return int.TryParse(value, out var i) ? i : 0;
+        if (targetType == typeof(double)) return double.TryParse(value, out var d) ? d : 0.0;
+        if (targetType == typeof(bool)) return bool.TryParse(value, out var b) && b;
+
+        try
+        {
+            return Convert.ChangeType(value, targetType);
+        }
+        catch
+        {
+            return Activator.CreateInstance(targetType)!;
+        }
     }
 }

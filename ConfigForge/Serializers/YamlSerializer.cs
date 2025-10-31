@@ -1,3 +1,4 @@
+using System.Collections;
 using System.ComponentModel;
 using System.Reflection;
 using System.Text;
@@ -18,7 +19,24 @@ public static class YamlSerializer
                 sb.AppendLine($"# {descAttr.Description}");
 
             var value = prop.GetValue(obj);
-            sb.AppendLine($"{prop.Name}: {value}");
+            if (value == null)
+            {
+                sb.AppendLine($"{prop.Name}: null");
+                continue;
+            }
+            
+            if (value is IList list && prop.PropertyType.IsGenericType)
+            {
+                sb.AppendLine($"{prop.Name}:");
+                foreach (var item in list)
+                {
+                    sb.AppendLine($"  - {item}");
+                }
+            }
+            else
+            {
+                sb.AppendLine($"{prop.Name}: {value}");
+            }
         }
 
         return sb.ToString();
